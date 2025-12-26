@@ -25,7 +25,7 @@ def get_wire_sq(ampere):
     elif ampere <= 65: return "16.0 SQ"
     else: return "25.0 SQ 이상 권장"
 
-# --- 3. 데이터베이스 ---
+# --- 3. 데이터베이스 (피치, 규격 정보 포함) ---
 db = {
     "실내": {
         "P0.9 (Fine)": {"pitch": 0.9, "c_w": 600, "c_h": 337.5, "p_w": 666, "p_h": 375, "power": 350, "weight": 6.8},
@@ -45,8 +45,8 @@ db = {
 }
 
 # --- 4. 메인 설정 및 사이드바 ---
-st.set_page_config(page_title="LED 설계 마스터 v5.9", layout="wide")
-st.title("🏗️ LED 전광판 통합 설계 마스터 v5.9")
+st.set_page_config(page_title="LED 설계 마스터 v6.0", layout="wide")
+st.title("🏗️ LED 전광판 통합 설계 마스터 v6.0")
 
 st.sidebar.header("1. 제품 사양 선택")
 env = st.sidebar.selectbox("설치 환경", ["실내", "실외"])
@@ -57,12 +57,11 @@ p = {}
 
 if selected_pitch == "직접 입력 (Custom)":
     st.sidebar.info("🛠️ 제품 카탈로그의 수치를 입력하세요.")
-    # 픽셀 피치 수치 입력 추가
+    p_name = st.sidebar.text_input("커스텀 제품 이름", value="Custom LED Cabinet")
     p_val = st.sidebar.number_input("픽셀 피치 (mm)", value=2.5, step=0.1, format="%.2f")
     c_w = st.sidebar.number_input("캐비닛 가로 (mm)", value=640.0)
     c_h = st.sidebar.number_input("캐비닛 세로 (mm)", value=480.0)
     
-    # 피치와 크기를 바탕으로 해상도 자동 계산 가이드 제공
     auto_p_w = int(c_w / p_val) if p_val > 0 else 0
     auto_p_h = int(c_h / p_val) if p_val > 0 else 0
     
@@ -73,9 +72,10 @@ if selected_pitch == "직접 입력 (Custom)":
     p_power = st.sidebar.number_input("평균 전력 (W/m²)", value=300)
     p_weight = st.sidebar.number_input("캐비닛 무게 (kg/pcs)", value=7.5)
     
-    p = {"pitch": p_val, "c_w": c_w, "c_h": c_h, "p_w": p_w, "p_h": p_h, "power": p_power, "weight": p_weight}
+    p = {"name": p_name, "pitch": p_val, "c_w": c_w, "c_h": c_h, "p_w": p_w, "p_h": p_h, "power": p_power, "weight": p_weight}
 else:
     p = db[env][selected_pitch]
+    p["name"] = selected_pitch
 
 st.sidebar.header("2. 목표 설치 공간")
 target_w = st.sidebar.number_input("목표 가로 (mm)", value=5000.0)
@@ -88,7 +88,6 @@ margin_percent = st.sidebar.slider("전력 할증 (%)", 0, 100, 70)
 cable_dist = st.sidebar.slider("컨트롤러 거리 (m)", 5, 100, 20)
 
 # --- 5. 연산 로직 ---
-# 캐비닛 수 계산
 nw, nh = max(1, round(target_w / p['c_w'])), max(1, round(target_h / p['c_h']))
 fw, fh = nw * p['c_w'], nh * p['c_h']
 diff_w, diff_h = fw - target_w, fh - target_h
@@ -97,7 +96,6 @@ res_w, res_h = nw * p['p_w'], nh * p['p_h']
 total_px = res_w * res_h
 area = (fw * fh) / 1_000_000
 
-# 전력 연산
 design_power_kw = ((area * p['power'] * 2.5) / 1000) * (1 + margin_percent/100)
 if p_mode == "3상4선(380V)":
     calc_amp = (design_power_kw * 1000) / (math.sqrt(3) * 380)
@@ -107,13 +105,11 @@ else:
 main_breaker = max(20, math.ceil(calc_amp/10)*10 + 10)
 main_wire_sq = get_wire_sq(calc_amp)
 
-# 분기 회로 연산
 branch_safe_watt = branch_limit_amp * 220 * 0.7
 total_watt_val = design_power_kw * 1000
 num_branches = math.ceil(total_watt_val / branch_safe_watt) if total_watt_val > 0 else 1
 cabs_per_branch = math.floor(total_cabs / num_branches) if num_branches > 0 else 0
 
-# 하중 및 케이블
 total_weight = (total_cabs * p['weight']) + (area * (15 if env == "실내" else 30))
 ports_needed = math.ceil(total_px / 650000)
 lan_total_m = (ports_needed * cable_dist) + ((total_cabs - ports_needed) * 1.2)
@@ -124,7 +120,7 @@ def get_aspect_ratio(w, h):
 aspect_ratio = get_aspect_ratio(res_w, res_h)
 
 # --- 6. 결과 UI ---
-st.subheader(f"📊 P{p['pitch']} {selected_pitch if selected_pitch != '직접 입력 (Custom)' else '커스텀'} 설계 리포트")
+st.subheader(f"📊 {p['name']} (P{p['pitch']}) 설계 리포트")
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("최종 화면비", aspect_ratio)
@@ -136,13 +132,16 @@ st.markdown("---")
 col_l, col_r = st.columns(2)
 
 with col_l:
-    st.success("### 📐 하드웨어 및 규격")
+    st.success("### 📐 하드웨어 규격 상세")
+    st.write(f"• **사용 캐비닛 종류:** `{p['name']}`")
+    st.write(f"• **캐비닛 개별 크기:** `{p['c_w']} x {p['c_h']} mm` (가로x세로)")
+    st.write(f"• **캐비닛 개별 해상도:** `{p['p_w']} x {p['p_h']} px` (피치: P{p['pitch']})")
+    st.divider()
     st.table({
         "구분": ["목표 (Target)", "실제 (Actual)", "오차 (Diff)"],
         "가로 (W)": [f"{target_w:,} mm", f"{fw:,} mm", f"{diff_w:+} mm"],
         "세로 (H)": [f"{target_h:,} mm", f"{fh:,} mm", f"{diff_h:+} mm"]
     })
-    st.info(f"📍 **픽셀 피치:** P{p['pitch']} mm / **캐비닛 해상도:** {p['p_w']} x {p['p_h']} px")
     st.write(f"• **전체 구성:** {nw}열 x {nh}단 (총 {total_cabs}대)")
     st.write(f"• **전체 해상도:** `{res_w} x {res_h} px` (총 {total_px:,} px)")
     st.write(f"• **총 예상 하중:** {total_weight:.1f} kg")
@@ -152,7 +151,7 @@ with col_r:
     st.write(f"• **메인 차단기:** `{main_breaker}A ({'4P' if p_mode=='3상4선(380V)' else '2P'})` / `{main_wire_sq}`")
     st.divider()
     st.write(f"• **분기 차단기:** `{branch_limit_amp}A` x `{num_branches} 회선` (단상)")
-    st.write(f"• **회선당 부하:** 약 {cabs_per_branch}대 연결 / `2.5 SQ` 배선")
+    st.write(f"• **회선당 부하:** 회선당 약 {cabs_per_branch}대 연결 / `2.5 SQ` 배선")
     st.divider()
     
     st.write(f"• **Novastar 추천:** `{get_controller_recommendation(total_px, 'Novastar')}`")
@@ -165,10 +164,11 @@ if st.button("📝 현장 제출용 요약서 생성"):
     summary = f"""[LED 전광판 시공 설계 발주서]
 
 1. 제품 정보
-- 피치/제품명: P{p['pitch']} / {selected_pitch}
-- 실제 규격: {fw:,} x {fh:,} mm (오차 W:{diff_w:+} / H:{diff_h:+})
-- 해상도: {res_w} x {res_h} px ({aspect_ratio})
-- 구성: {nw}열 x {nh}단 (총 {total_cabs}대)
+- 캐비닛 종류: {p['name']}
+- 캐비닛 크기: {p['c_w']} x {p['c_h']} mm (P{p['pitch']})
+- 실제 화면규격: {fw:,} x {fh:,} mm (오차 W:{diff_w:+} / H:{diff_h:+})
+- 전체 해상도: {res_w} x {res_h} px ({aspect_ratio})
+- 전체 구성: {nw}열 x {nh}단 (총 {total_cabs}대)
 
 2. 전기 시공
 - 설계부하: {design_power_kw:.2f} kW / {calc_amp:.1f} A
